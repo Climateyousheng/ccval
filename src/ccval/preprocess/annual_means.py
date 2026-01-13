@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# NOTE: Imported from user prototype 'analysis.py'. Refactor progressively.
 import iris
 from iris import Constraint
 import iris.analysis.cartography as cart
@@ -20,6 +19,9 @@ import xarray as xr
 import cf_units
 import warnings
 warnings.filterwarnings("ignore", module='iris')
+from ..io.iris_loaders import find_matching_files
+from .extract import try_extract
+
 
 # Helper
 
@@ -95,93 +97,6 @@ def stash_nc(s):
    
     return switcher.get(s, "nothing")
 
-# Corrected two-letter month codes (UM-style)
-MONTH_MAP_ALPHA = {
-    "ja": 1,   # January
-    "fb": 2,   # February
-    "mr": 3,   # March
-    "ar": 4,   # April
-    "my": 5,   # May
-    "jn": 6,   # June
-    "jl": 7,   # July
-    "ag": 8,   # August
-    "sp": 9,   # September
-    "ot": 10,  # October
-    "nv": 11,  # November
-    "dc": 12,  # December
-}
-
-def decode_month(mon_code: str) -> int:
-    """
-    Decode either:
-      - 'dc' style codes
-      - '11','21',...,'91','a1','b1','c1' style codes
-    """
-    if not mon_code:
-        return 0
-    s = mon_code.lower()
-
-    # alpha codes: 'dc', 'sp', ...
-    if s.isalpha():
-        return MONTH_MAP_ALPHA.get(s, 0)
-
-    # numeric/hex-ish codes: '11'..'91','a1','b1','c1'
-    # rule: first char encodes month index; second char is typically '1' (ignore)
-    # '1'..'9' => 1..9, 'a' => 10, 'b' => 11, 'c' => 12
-    if len(s) == 2:
-        first = s[0]
-        if first.isdigit():
-            m = int(first)
-            return m if 1 <= m <= 9 else 0
-        if first in ("a", "b", "c"):
-            return {"a": 10, "b": 11, "c": 12}[first]
-
-    return 0
-
-
-def find_matching_files(expt_name, model, up, start_year=None, end_year=None, base_dir="~/dump2hold"):
-    """
-    Find matching data files for a given experiment and sort them by year/month.
-
-    Supports:
-      - xqhuja#pi000001853dc+
-      - xqhujo#da00000185511+  (11=Jan, 91=Sep, a1=Oct, b1=Nov, c1=Dec)
-    """
-    base_dir = os.path.expanduser(base_dir)
-    datam_path = os.path.join(base_dir, expt_name, "datam")
-    if not os.path.isdir(datam_path):
-        datam_path = base_dir
-    # Month token can be either:
-    #   - two letters: [a-zA-Z]{2}
-    #   - two chars: [0-9a-cA-C][0-9]
-    pattern = (
-        fr"{re.escape(expt_name)}[{model}]\#{re.escape(up)}00000"
-        fr"(\d{{4}})"                 # year
-        fr"([a-zA-Z]{{2}}|[0-9a-cA-C][0-9])"  # month token
-        fr"\+"
-    )
-    regex = re.compile(pattern)
-
-    files = glob.glob(os.path.join(datam_path, "**"), recursive=True)
-    matching_files = []
-
-    for f in files:
-        match = regex.search(os.path.basename(f)) or regex.search(f)
-        if not match:
-            continue
-
-        year = int(match.group(1))
-        mon_code = match.group(2)
-        month = decode_month(mon_code)
-
-        if month == 0:
-            continue  # skip unparseable months
-
-        if (start_year is None or year >= start_year) and (end_year is None or year <= end_year):
-            matching_files.append((year, month, f))
-
-    matching_files.sort(key=lambda x: (x[0], x[1]))
-    return matching_files
 
 # === Utility: compute masked terrestrial area ===
 def compute_terrestrial_area(cube):
@@ -222,120 +137,6 @@ var_dict = {
      'precip': 86400,                                   # from kg/m2/s to mm/day
      'Others': 1,                                       # no conversion
 }
-
-# === Utility: extract cube by STASH or stash_code ===
-def _msi_from_stash_obj(st):
-    """STASH(model=1, section=3, item=261) -> 'm01s03i261'"""
-    if st is None:
-        return None
-    try:
-        return f"m{int(st.model):02d}s{int(st.section):02d}i{int(st.item):03d}"
-    except Exception:
-        pass
-    try:
-        # some iris versions expose .msi
-        s = str(st.msi).strip()
-        if s.startswith("m") and "s" in s and "i" in s:
-            return s
-    except Exception:
-        pass
-    return None
-
-def _msi_from_numeric_stash_code(code):
-    """
-    Numeric stash_code like 3261 -> s=3, i=261 -> 'm01s03i261'
-    Heuristic for model:
-      section >= 30 => model 2 (ocean/CO2 flux sections in your data)
-      else => model 1
-    """
-    if code is None:
-        return None
-    try:
-        n = int(code)  # handles np.int16 etc
-    except Exception:
-        return None
-    section = n // 1000
-    item = n % 1000
-    model = 2 if section >= 30 else 1
-    return f"m{model:02d}s{section:02d}i{item:03d}"
-
-def _msi_from_any_attr(attrs):
-    """Return MSI from either attrs['STASH'] or attrs['stash_code']."""
-    if not attrs:
-        return None
-    # PP-style
-    if "STASH" in attrs:
-        msi = _msi_from_stash_obj(attrs.get("STASH"))
-        if msi:
-            return msi
-    # NetCDF-style numeric
-    if "stash_code" in attrs:
-        msi = _msi_from_numeric_stash_code(attrs.get("stash_code"))
-        if msi:
-            return msi
-    return None
-
-def try_extract(cubes, code, stash_lookup_func=None, debug=False):
-    """
-    Extract cubes matching:
-      - STASH object attribute, or
-      - numeric stash_code attribute
-
-    code can be:
-      - MSI string 'm01s03i261'
-      - short name like 'gpp' if stash_lookup_func provided (your stash()).
-      - numeric stash_code like 3261
-    """
-    candidates = [code]
-
-    # Expand short-name -> MSI using your mapping
-    if stash_lookup_func is not None and isinstance(code, str):
-        msi = stash_lookup_func(code)
-        if msi and msi != "nothing":
-            candidates.append(msi)
-
-    # Add coercions
-    try:
-        candidates.append(str(code))
-    except Exception:
-        pass
-
-    # If numeric-like, include int form
-    if isinstance(code, (int, np.integer)) or (isinstance(code, str) and code.isdigit()):
-        try:
-            candidates.append(int(code))
-        except Exception:
-            pass
-
-    # Normalise candidate MSIs
-    cand_msi = set()
-    for c in candidates:
-        # MSI strings pass through
-        if isinstance(c, str) and c.startswith("m") and "s" in c and "i" in c:
-            cand_msi.add(c.strip())
-            continue
-        # numeric stash_code -> MSI
-        msi = _msi_from_numeric_stash_code(c)
-        if msi:
-            cand_msi.add(msi)
-
-    if debug:
-        print(f"Trying to extract cube for candidates: {candidates}")
-        print(f"Normalized candidate MSIs: {cand_msi}")
-
-    def _match(c):
-        attrs = getattr(c, "attributes", {}) or {}
-        cube_msi = _msi_from_any_attr(attrs)
-
-        if debug:
-            print(f"Cube: {c.name()} attrs keys={list(attrs.keys())} -> MSI={cube_msi}")
-
-        return (cube_msi in cand_msi)
-
-    try:
-        return cubes.extract(Constraint(cube_func=_match))
-    except Exception:
-        return iris.cube.CubeList([])
     
 
 # === Utility: compute global mean and scaled total ===
@@ -556,66 +357,6 @@ def region_mask(region):
     mask.data = np.isin(mask.data, target_ids).astype(int)
     return mask
 
-# === Utility: compute annual mean from scaled total ===
-# def compute_regional_annual_mean(cube, var, region):
-#     """
-#     Compute area-weighted annual means from an Iris cube.
-#     Handles 360_day calendars and missing bounds safely.
-#     Returns (years, annual_means).
-#     """
-#     # Handle CubeList input
-#     if isinstance(cube, iris.cube.CubeList):
-#         if not cube:
-#             raise ValueError("Empty CubeList passed to global_mean_pgC()")
-#         cube = cube[0]  # Get first cube in CubeList
-#     for name in ("latitude", "longitude"):
-#         coord = cube.coord(name)
-#         if not coord.has_bounds():
-#             coord.guess_bounds()
-#     cube = cube.copy()
-#     # --- Apply region mask ---
-#     if region != 'global':
-#         cube = cube * region_mask(region)
-#     else:
-#         pass
-#     # --- Compute regional mean or total based on variable ---
-#     if var == 'Others':
-#         gm = global_mean_pgC(cube, var)
-#     else:
-#         gm = global_total_pgC(cube, var)
-
-#     # --- Get time coordinate robustly ---
-#     time_coords = [c for c in gm.coords() if c.standard_name == 'time' or c.name() in ('t', 'time', 'TIME')]
-#     if not time_coords:
-#         raise ValueError("❌ No valid time coordinate found in cube.")
-#     tcoord = time_coords[0]
-
-#     # --- Ensure calendar and units are valid ---
-#     if not getattr(tcoord.units, "calendar", None):
-#         tcoord.units = cf_units.Unit("days since 1850-12-01 00:00:00", calendar="360_day")
-#     elif str(tcoord.units).startswith("unknown"):
-#         tcoord.units = cf_units.Unit("days since 1850-12-01 00:00:00", calendar="360_day")
-
-#     # --- Convert time → datetimes & extract years ---
-#     times = tcoord.units.num2date(tcoord.points)
-#     years = np.array([t.year for t in times])
-
-#     # --- Compute annual mean ---
-#     unique_years, idx = np.unique(years, return_inverse=True)
-#     # annual_means = np.array([np.nanmean(gm.data[idx == i]) for i in range(len(unique_years))])
-#     if gm.data.ndim == 0:  # scalar (no time dimension)
-#         annual_means = np.repeat(gm.data.item(), len(unique_years))
-#     else:
-#         annual_means = np.array([
-#             np.nanmean(gm.data[idx == i]) for i in range(len(unique_years))
-#     ])
-#     return {
-#         "years": unique_years,
-#         "data": annual_means,
-#         "name": cube.long_name or cube.standard_name or var,
-#         "units": str(gm.units),
-#         "region": region,
-#     }
 
 def compute_regional_annual_mean(cube, var, region):
     """

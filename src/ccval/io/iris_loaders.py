@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import iris
-
-from .analysis import try_extract
 
 
 def load_annual_mean_cubes(expt: str, base_dir: str = "~/annual_mean") -> iris.cube.CubeList:
@@ -14,26 +13,87 @@ def load_annual_mean_cubes(expt: str, base_dir: str = "~/annual_mean") -> iris.c
     return iris.load(filenames)
 
 
-def extract_soilparam_cubes(cubes: iris.cube.CubeList):
-    """
-    Returns dict of CubeLists (as returned by try_extract).
-    Keys: rh, cs, cv, frac, gpp, npp, fgco2, tas, pr
-    """
-    frac = try_extract(cubes, "frac")
-    if not frac:
-        frac = try_extract(cubes, 3317)
+MONTH_MAP_ALPHA = {
+    "ja": 1,
+    "fb": 2,
+    "mr": 3,
+    "ar": 4,
+    "my": 5,
+    "jn": 6,
+    "jl": 7,
+    "ag": 8,
+    "sp": 9,
+    "ot": 10,
+    "nv": 11,
+    "dc": 12,
+}
 
-    return {
-        "rh": try_extract(cubes, "rh"),
-        "cs": try_extract(cubes, "cs"),
-        "cv": try_extract(cubes, "cv"),
-        "frac": frac,
-        "gpp": try_extract(cubes, "gpp"),
-        "npp": try_extract(cubes, "npp"),
-        "fgco2": try_extract(cubes, "fgco2"),
-        "tas": try_extract(cubes, "tas"),
-        "pr": try_extract(cubes, "pr"),
-    }
+
+def decode_month(mon_code: str) -> int:
+    if not mon_code:
+        return 0
+    s = mon_code.lower()
+
+    if s.isalpha():
+        return MONTH_MAP_ALPHA.get(s, 0)
+
+    if len(s) == 2:
+        first = s[0]
+        if first.isdigit():
+            m = int(first)
+            return m if 1 <= m <= 9 else 0
+        if first in ("a", "b", "c"):
+            return {"a": 10, "b": 11, "c": 12}[first]
+
+    return 0
+
+
+def find_matching_files(
+    expt_name: str,
+    model: str,
+    up: str,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    base_dir: str = "~/dump2hold",
+):
+    """
+    Find matching UM output files for a given experiment and sort them by year/month.
+
+    Supports:
+      - xqhuja#pi000001853dc+
+      - xqhujo#da00000185511+  (11=Jan, 91=Sep, a1=Oct, b1=Nov, c1=Dec)
+    """
+    base_dir = os.path.expanduser(base_dir)
+    datam_path = os.path.join(base_dir, expt_name, "datam")
+    if not os.path.isdir(datam_path):
+        datam_path = base_dir
+
+    pattern = (
+        fr"{re.escape(expt_name)}[{model}]\#{re.escape(up)}00000"
+        fr"(\d{{4}})"
+        fr"([a-zA-Z]{{2}}|[0-9a-cA-C][0-9])"
+        fr"\+"
+    )
+    regex = re.compile(pattern)
+
+    files = glob.glob(os.path.join(datam_path, "**"), recursive=True)
+    matching_files = []
+
+    for f in files:
+        match = regex.search(os.path.basename(f)) or regex.search(f)
+        if not match:
+            continue
+
+        year = int(match.group(1))
+        month = decode_month(match.group(2))
+        if month == 0:
+            continue
+
+        if (start_year is None or year >= start_year) and (end_year is None or year <= end_year):
+            matching_files.append((year, month, f))
+
+    matching_files.sort(key=lambda x: (x[0], x[1]))
+    return matching_files
 
 
 def first_cube(cubelist_or_cube):
