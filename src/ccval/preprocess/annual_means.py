@@ -572,20 +572,39 @@ def extract_annual_means(expts_list, var_list=None, var_mapping=None, regions=No
     # print(var_list, var_mapping, var_dict)
     return dict_annual_means
 
-def extract_annual_means_to_zarr(recipe_path: Path) -> None:
-    """Temporary shim: loads recipe and calls your existing `extract_annual_means`.
 
-    Next steps:
-      - replace dict outputs with xarray Dataset
-      - write to Zarr/NetCDF in cache_root
-    """
-    with open(recipe_path, "r") as f:
+def extract_annual_means_to_zarr(recipe_path: Path) -> None:
+    """Load a YAML recipe, run prototype annual-means extraction, and persist to Zarr v2."""
+    import yaml
+    recipe_path = Path(recipe_path)
+    with recipe_path.open("r") as f:
         recipe = yaml.safe_load(f)
 
     expts = recipe.get("expts", [])
-    # call into your existing prototype function (still returns dict)
-    from .annual_means import extract_annual_means as _extract
+    regions = recipe.get("preprocess", {}).get("regions", None)
+    cache_root = Path(recipe.get("paths", {}).get("cache_root", "cache"))
+    store_path = cache_root / f"{recipe.get('name','preprocess')}_annual_means.zarr"
 
-    out = _extract(expts_list=expts, regions=recipe.get("preprocess", {}).get("regions"))
-    # TODO: convert `out` to xarray Dataset and persist to Zarr
-    print(f"Extracted annual means for {len(expts)} experiments (prototype dict output).")
+    from .annual_means import extract_annual_means as _extract  # prototype function
+    annual = _extract(expts_list=expts, regions=regions)
+
+    ds = preprocess_dict_to_zarr_v2(annual, store_path, consolidated=True, mode="w")
+    print(f"Wrote Zarr v2 store: {store_path}  (vars={len(ds.data_vars)})")
+
+# === CCVal persistence helpers (Zarr v2 default) ===
+def write_dataset_zarr_v2(ds, store_path, *, consolidated=True, mode="w"):
+    """Write an xarray Dataset as a Zarr v2 store (stable, widely supported).
+
+    This avoids Zarr v3 string dtype / consolidated-metadata warnings.
+    """
+    store_path = Path(store_path)
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    # xarray forwards this to zarr; v2 is widely supported
+    ds.to_zarr(store_path.as_posix(), mode=mode, consolidated=consolidated, zarr_version=2)
+
+def preprocess_dict_to_zarr_v2(annual_dict, store_path, *, consolidated=True, mode="w"):
+    """Convert the prototype annual-means dict to xarray and persist to Zarr v2."""
+    from .to_xarray import annual_means_dict_to_xr
+    ds = annual_means_dict_to_xr(annual_dict)
+    write_dataset_zarr_v2(ds, store_path, consolidated=consolidated, mode=mode)
+    return ds
