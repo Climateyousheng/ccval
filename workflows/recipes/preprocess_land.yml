@@ -1,13 +1,13 @@
 name: preprocess_land
 expts:
-  - EXPT_A
-  - EXPT_B
+  - xqhuc
+  - xqhud
 paths:
-  raw_root: /path/to/raw
-  cache_root: /path/to/cache
-  output_root: /path/to/outputs
+  raw_root: ${SCRIPTS_ROOT}/
+  cache_root: ${SCRIPTS_ROOT}/cache
+  output_root: ${SCRIPTS_ROOT}/outputs
 preprocess:
-  regions: [global, land, tropics]
+  regions: [global]
   n_years: null
 variables:
   soilResp: "S resp"
@@ -15,6 +15,6 @@ variables:
   VegCarb: "V carb"
   GPP: "GPP"
   NPP: "NPP"
-  fgco2: "Ocean flux"
-  tas: "temp"
-  pr: "precip"
+  # fgco2: "Ocean flux"
+  # tas: "temp"
+  # pr: "precip"

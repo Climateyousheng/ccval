@@ -1,4 +1,3 @@
-# NOTE: Imported from user prototype 'soil_params_io.py'. Contains placeholders ('...') to fill.
 from __future__ import annotations
 
 import glob
