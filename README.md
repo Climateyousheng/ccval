@@ -1,0 +1,25 @@
+# CCVal (startup skeleton)
+
+This is a minimal, extendable skeleton that separates:
+
+- **io/**: loading and cataloguing inputs (Iris-first)
+- **preprocess/**: deterministic preprocessing (annual means, masking, derived variables)
+- **viz/**: plotting
+- **cli/**: command-line entrypoints driven by YAML recipes in `workflows/`
+
+This tree was generated on 2026-01-09.
+
+## Quickstart
+
+```bash
+pip install -e .
+ccval --help
+```
+
+## Where your existing scripts landed
+
+- `analysis.py` → `src/ccval/preprocess/annual_means.py` (core annual-mean extraction utilities)
+- `plot.py` → `src/ccval/viz/timeseries.py`
+- `soil_params_*` → `src/ccval/io/iris_loaders.py`, `src/ccval/preprocess/soil_params.py`, `src/ccval/viz/maps.py`
+
+These modules are imported as a starting point; you should refactor them progressively into smaller pure functions.

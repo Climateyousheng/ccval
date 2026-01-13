@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccval"
+version = "0.1.0"
+description = "CCVal: capture, preprocess, validate and visualise land carbon-cycle diagnostics on HPC outputs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "iris>=3.6",
+  "numpy",
+  "pandas",
+  "xarray",
+  "cf-units",
+  "matplotlib",
+  "cartopy",
+  "pyyaml",
+  "typer>=0.9",
+]
+
+[project.scripts]
+ccval = "ccval.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
