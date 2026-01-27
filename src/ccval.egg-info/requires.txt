@@ -1,0 +1,9 @@
+iris>=1.0
+numpy
+pandas
+xarray
+cf-units
+matplotlib
+cartopy
+pyyaml
+typer>=0.9

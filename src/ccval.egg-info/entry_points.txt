@@ -1,0 +1,2 @@
+[console_scripts]
+ccval = ccval.cli.main:app

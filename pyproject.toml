@@ -9,7 +9,7 @@ description = "CCVal: capture, preprocess, validate and visualise land carbon-cy
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "iris>=3.6",
+  "iris>=1.0",
   "numpy",
   "pandas",
   "xarray",

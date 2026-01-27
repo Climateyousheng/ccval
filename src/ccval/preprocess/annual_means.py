@@ -600,7 +600,7 @@ def write_dataset_zarr_v2(ds, store_path, *, consolidated=True, mode="w"):
     store_path = Path(store_path)
     store_path.parent.mkdir(parents=True, exist_ok=True)
     # xarray forwards this to zarr; v2 is widely supported
-    ds.to_zarr(store_path.as_posix(), mode=mode, consolidated=consolidated, zarr_version=2)
+    ds.to_zarr(store_path.as_posix(), mode=mode, consolidated=consolidated, zarr_format=2)
 
 def preprocess_dict_to_zarr_v2(annual_dict, store_path, *, consolidated=True, mode="w"):
     """Convert the prototype annual-means dict to xarray and persist to Zarr v2."""
